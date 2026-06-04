@@ -1,185 +1,143 @@
-import telebot
-import requests
-import json
-import time
-import html
-import hashlib
-from telebot import types
+import asyncio
+import aiohttp
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.filters import Command
+from aiogram.types import LabeledPrice, PreCheckoutQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ParseMode
 
-TOKEN = '8596007073:AAFNvB6Zcl76uQGCkFGmU-n20euQeMXscgc'
-bot = telebot.TeleBot(TOKEN)
+BOT_TOKEN = "600000042001:_G5qCoOrda_VX4l7_atkEP53MbgwxRiRkIA"
 
-user_emails = {}
-user_last_message_id = {}
-user_sid = {}  # Сессия для каждого пользователя
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-def get_temp_email(chat_id):
-    """Создание временной почты через Guerrilla Mail"""
-    try:
-        # Получаем новый email
-        response = requests.get('https://api.guerrillamail.com/ajax.php?f=get_email_address&ip=127.0.0.1&agent=TelegramBot')
-        if response.status_code == 200:
-            data = response.json()
-            email = data.get('email_addr')
-            sid = data.get('sid')
-            
-            if email and sid:
-                user_sid[chat_id] = sid
-                return email
-    except Exception as e:
-        print(f"Ошибка создания почты: {e}")
-    return None
+GIFT_ID = "5956217000635139069"
+GIFT_NAME = "🧸 Плюшевый мишка"
+DEFAULT_COMMENT = "@DuDRovEGift залетай в нашу банду"
+PRICE = 100
+GIFT_COUNT = 6
 
-def check_email_inbox(chat_id):
-    """Проверка входящих писем через Guerrilla Mail"""
-    try:
-        sid = user_sid.get(chat_id)
-        if not sid:
-            return []
-        
-        response = requests.get(f'https://api.guerrillamail.com/ajax.php?f=get_email_list&sid={sid}&offset=0')
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('list', [])
-    except Exception as e:
-        print(f"Ошибка проверки почты: {e}")
-    return []
+async def send_gift(user_id: int, gift_id: str, text: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendGift"
+    payload = {
+        "user_id": user_id,
+        "gift_id": gift_id,
+        "text": text,
+        "pay_for_upgrade": True
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            result = await resp.json()
+            return result.get("ok", False), result
 
-def get_message_content(chat_id, message_id):
-    """Получение содержимого письма"""
-    try:
-        sid = user_sid.get(chat_id)
-        if not sid:
-            return None
-        
-        response = requests.get(f'https://api.guerrillamail.com/ajax.php?f=fetch_email&sid={sid}&email_id={message_id}')
-        if response.status_code == 200:
-            data = response.json()
-            return data
-    except Exception as e:
-        print(f"Ошибка получения письма: {e}")
-    return None
+async def get_bot_stars_balance():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getStarBalance"
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            result = await resp.json()
+            if result.get("ok"):
+                return result.get("result", {}).get("total_stars", 0)
+            return 0
 
-@bot.message_handler(commands=['start'])
-def start_message(message):
-    bot.send_sticker(message.chat.id, 'CAACAgEAAxkBAAEpLcxm2dW5AS4WVB8PTRVshB2g1KNC5QACLQEAAjgOghHg_AlwrsI5zzYE')
+def get_main_keyboard():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎁 КУПИТЬ 6 МЕДВЕДЕЙ ЗА 100⭐", callback_data="buy")],
+        [InlineKeyboardButton(text="💰 БАЛАНС БОТА", callback_data="balance")]
+    ])
+    return keyboard
 
-    welcome_text = (
-        "🙋 <b>Добро пожаловать!</b>\n"
-        "❓ <i>Это бот для временных почт чтобы привязать свой аккаунт на Arizona RP и не париться</i>.\n"
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message):
+    text = (
+        f"🧸 **ПОДАРКИ ЗА TELEGRAM STARS** 🧸\n\n"
+        f"Привет! При нажатии на кнопку ниже ты получишь **{GIFT_COUNT}** плюшевых мишек!\n\n"
+        f"🎁 **Подарок:** {GIFT_NAME}\n"
+        f"💰 **Цена:** {PRICE} Stars за {GIFT_COUNT} шт.\n"
+        f"💬 **Комментарий к подарку:**\n"
+        f"`{DEFAULT_COMMENT}`\n\n"
+        f"📌 Нажми на кнопку и оплати Stars"
     )
+    
+    await message.answer(text, reply_markup=get_main_keyboard(), parse_mode=ParseMode.MARKDOWN)
 
-    email = get_temp_email(message.chat.id)
-    if email:
-        user_emails[message.chat.id] = email
-        user_last_message_id[message.chat.id] = None
+@dp.callback_query(F.data == "buy")
+async def buy_callback(callback: types.CallbackQuery):
+    prices = [LabeledPrice(label=f"{GIFT_NAME} x{GIFT_COUNT}", amount=PRICE)]
+    
+    await bot.send_invoice(
+        chat_id=callback.from_user.id,
+        title=f"{GIFT_NAME} x{GIFT_COUNT}",
+        description=f"Вы получите {GIFT_COUNT} плюшевых мишек с подписью: {DEFAULT_COMMENT}",
+        payload="gift_purchase",
+        provider_token="",
+        currency="XTR",
+        prices=prices,
+        start_parameter="gift_purchase"
+    )
+    await callback.answer()
 
-        markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-        btn_change = types.KeyboardButton("✉️ Сменить почту ✉️")
-        btn_info = types.KeyboardButton("❓ Информация ❓")
-        btn_check = types.KeyboardButton("📬 Проверить письма 📬")
-        markup.add(btn_change, btn_info, btn_check)
+@dp.callback_query(F.data == "balance")
+async def balance_callback(callback: types.CallbackQuery):
+    balance = await get_bot_stars_balance()
+    text = f"💰 **БАЛАНС БОТА:** {balance} Stars\n\n💡 Эти Stars используются для отправки подарков."
+    await callback.message.edit_text(text, reply_markup=get_main_keyboard(), parse_mode=ParseMode.MARKDOWN)
+    await callback.answer()
 
-        bot.send_message(
-            message.chat.id,
-            welcome_text,
-            parse_mode='HTML',
-            reply_markup=markup
-        )
+@dp.pre_checkout_query()
+async def pre_checkout_handler(query: PreCheckoutQuery):
+    bot_balance = await get_bot_stars_balance()
+    if bot_balance < PRICE:
+        await query.answer(ok=False, error_message="У бота нет Stars для отправки подарков. Попробуйте позже.")
+        return
+    await query.answer(ok=True)
 
-        email_message = f"⚠️ <b>Ваша временная почта:</b>\n<code>{email}</code> ⚠️"
-        bot.send_message(message.chat.id, email_message, parse_mode='HTML')
-    else:
-        bot.send_message(message.chat.id, "⚠️ <b>Ошибка при получении почты</b> ⚠️", parse_mode='HTML')
-
-@bot.message_handler(content_types=['text'])
-def func(message):
-    if message.text == "✉️ Сменить почту ✉️":
-        new_email = get_temp_email(message.chat.id)
-        if new_email:
-            user_emails[message.chat.id] = new_email
-            user_last_message_id[message.chat.id] = None
-            bot.send_message(message.chat.id, f"⚠️ <b>Ваша новая временная почта:</b>\n<code>{new_email}</code> ⚠️", parse_mode='HTML')
+@dp.message(F.successful_payment)
+async def successful_payment_handler(message: types.Message):
+    user = message.from_user
+    stars_spent = message.successful_payment.total_amount
+    
+    success_count = 0
+    fail_count = 0
+    
+    await message.answer("🔄 Отправляю подарки... Подождите немного ⏳")
+    
+    for i in range(GIFT_COUNT):
+        success, response = await send_gift(user.id, GIFT_ID, DEFAULT_COMMENT)
+        if success:
+            success_count += 1
         else:
-            bot.send_message(message.chat.id, "⚠️ <b>Ошибка при смене почты</b> ⚠️", parse_mode='HTML')
+            fail_count += 1
+        await asyncio.sleep(0.5)
     
-    elif message.text == "❓ Информация ❓":
-        info_text = (
-            "📧 <b>О боте:</b>\n"
-            "Этот бот создаёт временные email адреса для регистрации на Arizona RP.\n\n"
-            "✨ <b>Особенности:</b>\n"
-            "• Бесплатно и без ограничений\n"
-            "• Автоматическое уведомление о новых письмах\n"
-            "• Можно вручную проверить почту\n"
-            "• Письма хранятся до 1 часа\n\n"
-            "👨‍💻 <b>Создатель:</b> @crio_samp_legend"
+    if success_count > 0:
+        text = (
+            f"✅ **ГОТОВО!** 🎉\n\n"
+            f"🧸 **Получено мишек:** {success_count} из {GIFT_COUNT}\n"
+            f"💬 Комментарий: {DEFAULT_COMMENT}\n"
+            f"⭐ Потрачено: {stars_spent} Stars\n\n"
+            f"📱 Все подарки уже в вашем профиле!\n\n"
+            f"🔗 **ПРИСОЕДИНЯЙСЯ К НАМ:**\n"
+            f"https://t.me/durov_gifts"
         )
-        bot.send_message(message.chat.id, info_text, parse_mode='HTML')
-    
-    elif message.text == "📬 Проверить письма 📬":
-        check_and_send_emails(message.chat.id, manual=True)
-
-def check_and_send_emails(chat_id, manual=False):
-    """Проверка и отправка писем пользователю"""
-    email = user_emails.get(chat_id)
-    if not email:
-        if manual:
-            bot.send_message(chat_id, "⚠️ <b>Сначала создайте почту командой /start</b> ⚠️", parse_mode='HTML')
-        return
-    
-    messages = check_email_inbox(chat_id)
-    
-    if not messages:
-        if manual:
-            bot.send_message(chat_id, "📭 <b>Новых писем нет</b> 📭", parse_mode='HTML')
-        return
-    
-    new_messages = []
-    for msg in messages:
-        msg_id = msg.get('mail_id')
-        if user_last_message_id.get(chat_id) != msg_id:
-            new_messages.append(msg)
-    
-    if not new_messages:
-        if manual:
-            bot.send_message(chat_id, "📭 <b>Новых писем нет</b> 📭", parse_mode='HTML')
-        return
-    
-    for msg in new_messages:
-        msg_id = msg.get('mail_id')
-        user_last_message_id[chat_id] = msg_id
         
-        msg_content = get_message_content(chat_id, msg_id)
-        if msg_content:
-            email_from = html.escape(msg_content.get('mail_from', 'Неизвестно'))
-            email_subject = html.escape(msg_content.get('mail_subject', 'Без темы'))
-            email_body = html.escape(msg_content.get('mail_text_only', 'Текст письма отсутствует')[:500])
-            
-            notification = (
-                f"📨 <b>Новое письмо!</b>\n"
-                f"📧 <b>Почта:</b> <code>{email}</code>\n"
-                f"👤 <b>От кого:</b> {email_from}\n"
-                f"📋 <b>Тема:</b> {email_subject}\n\n"
-                f"💬 <b>Содержание:</b>\n{email_body}"
-            )
-            
-            bot.send_message(chat_id, notification, parse_mode='HTML')
+        if fail_count > 0:
+            text += f"\n\n⚠️ {fail_count} подарков не отправились. Администратор уведомлён."
+        
+        await message.answer(text, reply_markup=get_main_keyboard(), parse_mode=ParseMode.MARKDOWN)
+    else:
+        await message.answer(
+            f"❌ **ОШИБКА!**\n\n"
+            f"Не удалось отправить подарки. Администратор уведомлён.\n"
+            f"Ваши Stars будут возвращены вручную.",
+            reply_markup=get_main_keyboard(),
+            parse_mode=ParseMode.MARKDOWN
+        )
 
-def check_for_new_emails():
-    """Фоновая проверка писем для всех пользователей"""
-    while True:
-        try:
-            for chat_id in list(user_emails.keys()):
-                check_and_send_emails(chat_id, manual=False)
-        except Exception as e:
-            print(f"Ошибка в фоновой проверке: {e}")
-        time.sleep(15)  # Проверка каждые 15 секунд
+async def main():
+    balance = await get_bot_stars_balance()
+    print("🚀 БОТ ЗАПУЩЕН!")
+    print(f"💰 Баланс бота: {balance} Stars")
+    print(f"🎁 При старте бот отправляет счёт на {PRICE}⭐ за {GIFT_COUNT} мишек")
+    await dp.start_polling(bot)
 
-# Запуск фонового потока
-import threading
-email_check_thread = threading.Thread(target=check_for_new_emails, daemon=True)
-email_check_thread.start()
-
-if __name__ == '__main__':
-    print("Бот запущен и готов к работе!")
-    bot.polling(none_stop=True, interval=0)
+if __name__ == "__main__":
+    asyncio.run(main())
