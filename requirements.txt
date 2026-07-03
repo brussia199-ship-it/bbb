@@ -1,1 +1,4 @@
-vkbottle==4.3.13
+vk-api==11.9.9
+requests==2.31.0
+urllib3==2.0.7
+certifi==2023.7.22
