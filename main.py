@@ -5,7 +5,7 @@ import random
 from vkbottle.bot import Bot, Message
 
 TOKEN = "vk1.a.McsxY5CGtA6s9PtFItFhGXJ7-JFYd4wezGHSleFBB6ABfalcwzGRO3Hz0qVY15GgLw0T4FSFF8I-z6DrG7CfthYPAV3u7ftNDmQ9qkRGUGrypx5AB9v9s1t_KVcCwHt4z0yAqLZX-ErX2oefsWHpn79cqeYzIJfn7lD3mdsZV_ihPJ9VlGhqnbzDROujIil76-ZfRmXyp9DOUQTJsP65wg"
-ADMIN_ID = 1038602002
+ADMIN_ID = 823652026
 
 DB_FILE = "chats_db.json"
 BROADCAST_DELAY = 0  # Не задержка между сообщениями внутри одной итерации
