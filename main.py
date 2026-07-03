@@ -4,7 +4,7 @@ import os
 import random
 from vkbottle.bot import Bot, Message
 
-TOKEN = "vk1.a.2pOLRBpB9IS5rWeKcjgWwaGg_btNDHS7kdqShMxgX0iCkya38r7ONHi12aBMomYq8UabUhHaXSop2Qk5dd7GQ4Y8lj-kZGjfqzTBp3SDCorejXUBbJw4Eso0JCFYLkiYyiPcmgDPPC2fKpsniMyCDqHliGavCS3TAkCAVvuKljf14Yl22hiPLO-ikFZQlU3ttHQ_OCXa8W_3iBUI9dsDfA"
+TOKEN = "vk1.a.McsxY5CGtA6s9PtFItFhGXJ7-JFYd4wezGHSleFBB6ABfalcwzGRO3Hz0qVY15GgLw0T4FSFF8I-z6DrG7CfthYPAV3u7ftNDmQ9qkRGUGrypx5AB9v9s1t_KVcCwHt4z0yAqLZX-ErX2oefsWHpn79cqeYzIJfn7lD3mdsZV_ihPJ9VlGhqnbzDROujIil76-ZfRmXyp9DOUQTJsP65wg"
 ADMIN_ID = 1038602002
 
 DB_FILE = "chats_db.json"
