@@ -1,17 +1,19 @@
 import vk_api
-from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+from vk_api.longpoll import VkLongPoll, VkEventType
 import threading
 import time
 import json
-import os
+import random
 
 class VKAutopiarBot:
     def __init__(self, token, admin_id):
         self.token = token
         self.admin_id = admin_id
         self.vk = vk_api.VkApi(token=token)
-        self.longpoll = VkBotLongPoll(self.vk, self.admin_id)
         self.vk_api = self.vk.get_api()
+        
+        # Используем обычный LongPoll вместо BotLongPoll
+        self.longpoll = VkLongPoll(self.vk)
         
         # Настройки по умолчанию
         self.settings = {
@@ -62,6 +64,7 @@ class VKAutopiarBot:
             try:
                 for group_id in self.settings["groups"]:
                     self.send_piar(group_id)
+                    time.sleep(5)  # Пауза между постами
                 time.sleep(self.settings["interval"])
             except Exception as e:
                 print(f"Ошибка в автопиаре: {e}")
@@ -70,8 +73,9 @@ class VKAutopiarBot:
     def send_piar(self, group_id):
         """Отправка сообщения в группу"""
         try:
+            # Проверяем, есть ли доступ к группе
             self.vk_api.wall.post(
-                owner_id=-group_id,
+                owner_id=-abs(group_id),
                 message=self.settings["text"],
                 from_group=1
             )
@@ -81,6 +85,7 @@ class VKAutopiarBot:
             
     def add_group(self, group_id):
         """Добавление группы в список"""
+        group_id = abs(group_id)  # Приводим к положительному числу
         if group_id not in self.settings["groups"]:
             self.settings["groups"].append(group_id)
             self.save_settings()
@@ -89,6 +94,7 @@ class VKAutopiarBot:
         
     def remove_group(self, group_id):
         """Удаление группы из списка"""
+        group_id = abs(group_id)
         if group_id in self.settings["groups"]:
             self.settings["groups"].remove(group_id)
             self.save_settings()
@@ -204,7 +210,7 @@ class VKAutopiarBot:
             self.vk_api.messages.send(
                 user_id=user_id,
                 message=text,
-                random_id=0
+                random_id=random.randint(1, 999999999)
             )
         except Exception as e:
             print(f"Ошибка отправки сообщения: {e}")
@@ -224,13 +230,13 @@ class VKAutopiarBot:
         while True:
             try:
                 for event in self.longpoll.listen():
-                    if event.type == VkBotEventType.MESSAGE_NEW:
-                        message = event.object.message
-                        user_id = message['from_id']
-                        text = message.get('text', '').strip()
-                        
-                        if text:
-                            self.handle_commands(text, user_id)
+                    if event.type == VkEventType.MESSAGE_NEW:
+                        if event.message and event.message.get('text'):
+                            message = event.message['text'].strip()
+                            user_id = event.message['from_id']
+                            
+                            if message.startswith('/'):
+                                self.handle_commands(message, user_id)
                             
             except Exception as e:
                 print(f"Ошибка в основном цикле: {e}")
