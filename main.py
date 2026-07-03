@@ -1,146 +1,244 @@
-import asyncio
+import vk_api
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+import threading
+import time
 import json
 import os
-import random
-from vkbottle.bot import Bot, Message
 
-TOKEN = "vk1.a.McsxY5CGtA6s9PtFItFhGXJ7-JFYd4wezGHSleFBB6ABfalcwzGRO3Hz0qVY15GgLw0T4FSFF8I-z6DrG7CfthYPAV3u7ftNDmQ9qkRGUGrypx5AB9v9s1t_KVcCwHt4z0yAqLZX-ErX2oefsWHpn79cqeYzIJfn7lD3mdsZV_ihPJ9VlGhqnbzDROujIil76-ZfRmXyp9DOUQTJsP65wg"
-ADMIN_ID = 823652026
-
-DB_FILE = "chats_db.json"
-BROADCAST_DELAY = 0  # Не задержка между сообщениями внутри одной итерации
-RACILKA_INTERVAL = 70  # интервал между рассылками, сек
-
-bot = Bot(token=TOKEN)
-racilka_task = None  # глобальный таск рассылки
-racilka_active = False
-
-# ---- db helpers ----
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"chats": [], "__welcome_sent": []}
-
-def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(db, f, ensure_ascii=False, indent=2)
-
-def ensure_chat_saved(peer_id):
-    db = load_db()
-    if peer_id not in db["chats"]:
-        db["chats"].append(peer_id)
-        save_db(db)
-
-def remove_chat(peer_id):
-    db = load_db()
-    if peer_id in db["chats"]:
-        db["chats"].remove(peer_id)
-        save_db(db)
-
-def mark_welcome_sent(peer_id):
-    db = load_db()
-    if "__welcome_sent" not in db:
-        db["__welcome_sent"] = []
-    if peer_id not in db["__welcome_sent"]:
-        db["__welcome_sent"].append(peer_id)
-        save_db(db)
-
-def is_chat(peer_id: int) -> bool:
-    return peer_id >= 2000000000
-
-# Функция фильтрации размеров изображений
-def get_valid_photo_sizes(photo):
-    allowed_types = {
-        's', 'm', 'x', 'o', 'p', 'q', 'r', 'k', 'l', 'y', 'z', 'c', 'w', 'a', 'b', 'e', 'i', 'd', 'j', 'temp', 'h', 'g', 'n', 'f', 'max'
-    }
-    sizes = photo.get('sizes', [])
-    valid_sizes = [size for size in sizes if size.get('type') in allowed_types]
-    return valid_sizes
-
-# ---- рассылка ----
-async def racilka_loop(message_text: str):
-    global racilka_active
-    while racilka_active:
-        db = load_db()
-        chats = db.get("chats", [])
-        for peer in chats:
+class VKAutopiarBot:
+    def __init__(self, token, admin_id):
+        self.token = token
+        self.admin_id = admin_id
+        self.vk = vk_api.VkApi(token=token)
+        self.longpoll = VkBotLongPoll(self.vk, self.admin_id)
+        self.vk_api = self.vk.get_api()
+        
+        # Настройки по умолчанию
+        self.settings = {
+            "text": "🔥 Автопиар! Подписывайтесь на наш паблик!",
+            "interval": 3600,  # 1 час
+            "groups": []
+        }
+        
+        # Загрузка настроек
+        self.load_settings()
+        
+        # Флаг для остановки автопиара
+        self.running = True
+        self.piar_thread = None
+        
+    def load_settings(self):
+        """Загрузка настроек из файла"""
+        try:
+            with open("settings.json", "r", encoding="utf-8") as f:
+                self.settings = json.load(f)
+        except:
+            self.save_settings()
+            
+    def save_settings(self):
+        """Сохранение настроек в файл"""
+        with open("settings.json", "w", encoding="utf-8") as f:
+            json.dump(self.settings, f, ensure_ascii=False, indent=4)
+            
+    def start_autopiar(self):
+        """Запуск автопиара в отдельном потоке"""
+        if self.piar_thread and self.piar_thread.is_alive():
+            return
+            
+        self.running = True
+        self.piar_thread = threading.Thread(target=self.autopiar_loop)
+        self.piar_thread.daemon = True
+        self.piar_thread.start()
+        
+    def stop_autopiar(self):
+        """Остановка автопиара"""
+        self.running = False
+        if self.piar_thread:
+            self.piar_thread.join(timeout=1)
+            
+    def autopiar_loop(self):
+        """Основной цикл автопиара"""
+        while self.running:
             try:
-                await bot.api.messages.send(peer_id=peer, message=message_text, random_id=random.randint(1, 2**31-1))
-                await asyncio.sleep(BROADCAST_DELAY)
-            except:
-                remove_chat(peer)
-        await asyncio.sleep(RACILKA_INTERVAL)
-
-# ---- основной обработчик ----
-@bot.on.message()
-async def handler(message: Message):
-    global racilka_task, racilka_active
-
-    text = (message.text or "").strip()
-    if not text:
-        return
-    command = text.split()[0].lower()
-    peer_id = message.peer_id
-    from_id = message.from_id
-
-    # Обработка вложений (фото)
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.type == 'photo':
-                # Получаем и фильтруем размеры фото
-                valid_sizes = get_valid_photo_sizes(attachment.photo)
-                # Можно далее использовать valid_sizes по необходимости
-                # Например, выбрать самый большой или передать их куда нужно
-                # В данном пример не используется, но фильтр есть
-                pass
-
-    # Личные сообщения от админа
-    if not is_chat(peer_id) and from_id == ADMIN_ID:
-        if command in ["/startracilka", "startracilka"]:
-            if racilka_active:
-                await message.answer("Рассылка уже активна!")
-                return
-            payload = text[len(command):].strip() or "🔥 Реклама 🔥"
-            racilka_active = True
-            racilka_task = asyncio.create_task(racilka_loop(payload))
-            await message.answer(f"Рассылка запущена! Сообщение: {payload}")
+                for group_id in self.settings["groups"]:
+                    self.send_piar(group_id)
+                time.sleep(self.settings["interval"])
+            except Exception as e:
+                print(f"Ошибка в автопиаре: {e}")
+                time.sleep(10)
+                
+    def send_piar(self, group_id):
+        """Отправка сообщения в группу"""
+        try:
+            self.vk_api.wall.post(
+                owner_id=-group_id,
+                message=self.settings["text"],
+                from_group=1
+            )
+            print(f"✅ Автопиар отправлен в группу {group_id}")
+        except Exception as e:
+            print(f"❌ Ошибка отправки в группу {group_id}: {e}")
+            
+    def add_group(self, group_id):
+        """Добавление группы в список"""
+        if group_id not in self.settings["groups"]:
+            self.settings["groups"].append(group_id)
+            self.save_settings()
+            return True
+        return False
+        
+    def remove_group(self, group_id):
+        """Удаление группы из списка"""
+        if group_id in self.settings["groups"]:
+            self.settings["groups"].remove(group_id)
+            self.save_settings()
+            return True
+        return False
+        
+    def is_admin(self, user_id):
+        """Проверка, является ли пользователь администратором"""
+        return str(user_id) == str(self.admin_id)
+        
+    def handle_commands(self, message, user_id):
+        """Обработка команд"""
+        if not self.is_admin(user_id):
+            self.send_message(user_id, "❌ У вас нет прав администратора!")
             return
-        if command in ["/stopracilka", "stopracilka"]:
-            if not racilka_active:
-                await message.answer("Рассилка уже остановлена!")
+            
+        parts = message.split()
+        command = parts[0].lower()
+        
+        if command == "/txt":
+            if len(parts) < 2:
+                self.send_message(user_id, "❌ Использование: /txt [текст рассылки]")
                 return
-            racilka_active = False
-            if racilka_task:
-                racilka_task.cancel()
-                racilka_task = None
-            await message.answer("Рассылка остановлена!")
-            return
-
-    # Беседы
-    if is_chat(peer_id):
-        db = load_db()
-        if peer_id not in db.get("chats", []):
-            if command in ["/подписаться", "subscribe", "подп"]:
-                ensure_chat_saved(peer_id)
-                await message.answer("Чат подписан на рассылку. Чтобы отписаться — напишите '/Отписаться'.")
+            new_text = " ".join(parts[1:])
+            self.settings["text"] = new_text
+            self.save_settings()
+            self.send_message(user_id, f"✅ Текст обновлен: {new_text}")
+            
+        elif command == "/interval":
+            if len(parts) != 2:
+                self.send_message(user_id, "❌ Использование: /interval [секунды]")
                 return
-            if command in ["/отписаться", "unsubscribe", "отп"]:
-                remove_chat(peer_id)
-                await message.answer("Чат отписан от рассылки.")
+            try:
+                interval = int(parts[1])
+                if interval < 10:
+                    self.send_message(user_id, "❌ Интервал должен быть больше 10 секунд")
+                    return
+                self.settings["interval"] = interval
+                self.save_settings()
+                self.send_message(user_id, f"✅ Интервал обновлен: {interval} секунд")
+                self.stop_autopiar()
+                self.start_autopiar()
+            except ValueError:
+                self.send_message(user_id, "❌ Введите число!")
+                
+        elif command == "/infochat":
+            count = len(self.settings["groups"])
+            groups = "\n".join([f"  - {g}" for g in self.settings["groups"]]) if self.settings["groups"] else "  (пусто)"
+            self.send_message(user_id, f"📊 Подключенные группы: {count}\n{groups}")
+            
+        elif command == "/help":
+            help_text = """
+🤖 **Команды бота:**
+/txt [текст] — Изменить текст рассылки
+/interval [сек] — Изменить интервал автопиара
+/infochat — Показать количество групп
+/help — Показать это сообщение
+/add [id] — Добавить группу (по ID)
+/remove [id] — Удалить группу (по ID)
+/start — Запустить автопиар
+/stop — Остановить автопиар
+            """
+            self.send_message(user_id, help_text)
+            
+        elif command == "/add":
+            if len(parts) != 2:
+                self.send_message(user_id, "❌ Использование: /add [id_группы]")
                 return
-            if peer_id not in db.get("__welcome_sent", []):
-                mark_welcome_sent(peer_id)
-                await message.answer("Привет! Если хотите получать рассылку — напишите '/Подписаться'.")
-            return
+            try:
+                group_id = int(parts[1])
+                if self.add_group(group_id):
+                    self.send_message(user_id, f"✅ Группа {group_id} добавлена")
+                    self.stop_autopiar()
+                    self.start_autopiar()
+                else:
+                    self.send_message(user_id, f"⚠️ Группа {group_id} уже в списке")
+            except ValueError:
+                self.send_message(user_id, "❌ Введите число!")
+                
+        elif command == "/remove":
+            if len(parts) != 2:
+                self.send_message(user_id, "❌ Использование: /remove [id_группы]")
+                return
+            try:
+                group_id = int(parts[1])
+                if self.remove_group(group_id):
+                    self.send_message(user_id, f"✅ Группа {group_id} удалена")
+                    self.stop_autopiar()
+                    if self.settings["groups"]:
+                        self.start_autopiar()
+                else:
+                    self.send_message(user_id, f"⚠️ Группа {group_id} не найдена")
+            except ValueError:
+                self.send_message(user_id, "❌ Введите число!")
+                
+        elif command == "/start":
+            if not self.settings["groups"]:
+                self.send_message(user_id, "❌ Нет подключенных групп. Добавьте группы через /add")
+                return
+            self.start_autopiar()
+            self.send_message(user_id, "✅ Автопиар запущен!")
+            
+        elif command == "/stop":
+            self.stop_autopiar()
+            self.send_message(user_id, "⏹️ Автопиар остановлен")
+            
         else:
-            if command in ["отписаться", "unsubscribe", "отп"]:
-                remove_chat(peer_id)
-                await message.answer("Чат отписан от рассылки.")
-                return
-            return
+            self.send_message(user_id, "❌ Неизвестная команда. Используйте /help")
+            
+    def send_message(self, user_id, text):
+        """Отправка сообщения пользователю"""
+        try:
+            self.vk_api.messages.send(
+                user_id=user_id,
+                message=text,
+                random_id=0
+            )
+        except Exception as e:
+            print(f"Ошибка отправки сообщения: {e}")
+            
+    def run(self):
+        """Основной цикл бота"""
+        print("🤖 Бот автопиара запущен!")
+        print(f"👤 Администратор: {self.admin_id}")
+        print(f"📝 Текст: {self.settings['text']}")
+        print(f"⏱️ Интервал: {self.settings['interval']} сек")
+        print(f"📊 Групп: {len(self.settings['groups'])}")
+        
+        # Автозапуск, если есть группы
+        if self.settings["groups"]:
+            self.start_autopiar()
+            
+        while True:
+            try:
+                for event in self.longpoll.listen():
+                    if event.type == VkBotEventType.MESSAGE_NEW:
+                        message = event.object.message
+                        user_id = message['from_id']
+                        text = message.get('text', '').strip()
+                        
+                        if text:
+                            self.handle_commands(text, user_id)
+                            
+            except Exception as e:
+                print(f"Ошибка в основном цикле: {e}")
+                time.sleep(5)
 
-# ---- старт ----
 if __name__ == "__main__":
-    print("Bot запущен...")
-    bot.run_forever()
+    TOKEN = "vk1.a.McsxY5CGtA6s9PtFItFhGXJ7-JFYd4wezGHSleFBB6ABfalcwzGRO3Hz0qVY15GgLw0T4FSFF8I-z6DrG7CfthYPAV3u7ftNDmQ9qkRGUGrypx5AB9v9s1t_KVcCwHt4z0yAqLZX-ErX2oefsWHpn79cqeYzIJfn7lD3mdsZV_ihPJ9VlGhqnbzDROujIil76-ZfRmXyp9DOUQTJsP65wg"
+    ADMIN_ID = 823652026
+    
+    bot = VKAutopiarBot(TOKEN, ADMIN_ID)
+    bot.run()
